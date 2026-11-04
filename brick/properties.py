@@ -15,3 +15,6 @@ IRREGULARITY = 0.4 | units.parsec # rms displacement
 IRREGULARITY_MIN_WAVELENGTH = 1.0 | units.parsec # smallest lumps
 IRREGULARITY_MAX_WAVELENGTH = 8.0 | units.parsec # largest wiggles
 IRREGULARITY_SEED = 42 # change for a different random pattern
+
+# Molecular cloud initial conditions seed
+MOLECULAR_CLOUD_SEED = 100 # change for a different realization of the initial turbulent cloud

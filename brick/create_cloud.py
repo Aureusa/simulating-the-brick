@@ -322,7 +322,7 @@ def create_cloud(N=100, Mcloud=100. | units.MSun,
     # Create the initial molecular cloud particle distribution
     parts = molecular_cloud(targetN=N,convert_nbody=conv,
                             base_grid=body_centered_grid_unit_cube,
-                            seed=100).result
+                            seed=prop.MOLECULAR_CLOUD_SEED).result
 
     # Shape the spherical cloud into "The Brick" with the specified aspect ratio and bend
     half_length = shape_brick(parts, Rcloud, aspect_ratio, bend)
@@ -353,7 +353,7 @@ def run_molecular_cloud(N=100, Mcloud=100. | units.MSun,
 
     parts = molecular_cloud(targetN=N,convert_nbody=conv,
                             base_grid=body_centered_grid_unit_cube,
-                            seed=100).result
+                            seed=prop.MOLECULAR_CLOUD_SEED).result
     half_length = shape_brick(parts, Rcloud, aspect_ratio, bend)
     prefix = "GMC_"
     if irregularity > 0 | units.parsec:
