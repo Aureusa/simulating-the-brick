@@ -1,95 +1,75 @@
 import numpy
-  
-from matplotlib import pyplot 
-
 from amuse.lab import *
-from amuse.ext.molecular_cloud import molecular_cloud
-from amuse.ext.evrard_test import body_centered_grid_unit_cube
+from brick.brick import TheBrick
 
-import properties as prop
+from .sph import setup_sph, EPS
+from .utils import plot_hydro
 
 
-def run_molecular_cloud(N=100, Mcloud=100. | units.MSun,
-                        Rcloud=1. | units.parsec,
-                        aspect_ratio=1., bend=0. | units.parsec,
-                        irregularity=0. | units.parsec):
+AVAILABLE_CODES = {
+    "Fi": setup_sph
+}
 
-    conv = nbody_system.nbody_to_si(Mcloud,Rcloud)
 
-    rho_cloud = 3.*Mcloud/(4.*numpy.pi*Rcloud**3)
-    print(rho_cloud)
-    tff = 0.5427/numpy.sqrt(constants.G*rho_cloud)
-    print("t_ff=", tff.value_in(units.Myr), 'Myr')
+def run_hydro(
+        brick: TheBrick,
+        code: str = "Fi",
+        dt: units.Myr = 1.e-2 | units.Myr,
+        t_end: units.Myr = 1.0 | units.Myr,
+        plot_prefix: str = "hydro"
+    ):
+    if code not in AVAILABLE_CODES:
+        raise ValueError(f"Code '{code}' is not available. Choose from {AVAILABLE_CODES.keys()}.")
 
-    dt = 1.e-2 | units.Myr
-    t_end = 1.0 | units.Myr
+    code_name = code
+    code_setup_function = AVAILABLE_CODES[code]
+    code = code_setup_function(brick.converter, dt)
 
-    parts = molecular_cloud(targetN=N,convert_nbody=conv,
-                            base_grid=body_centered_grid_unit_cube,
-                            seed=prop.MOLECULAR_CLOUD_SEED).result
-    half_length = shape_brick(parts, Rcloud, aspect_ratio, bend)
-    prefix = "GMC_"
-    if irregularity > 0 | units.parsec:
-        add_irregularities(parts, irregularity,
-                           prop.IRREGULARITY_MIN_WAVELENGTH,
-                           prop.IRREGULARITY_MAX_WAVELENGTH,
-                           seed=prop.IRREGULARITY_SEED)
-        prefix = "GMC_irregular_"
+    # Add the brick's gas particles to the code code (ugly workaround)
+    if code_name == "Fi":
+        brick.set_smoothing_length(EPS) # Set the code smoothing length for the brick's gas particles
 
-    sph = Fi(conv)
-    sph.parameters.use_hydro_flag = True
-    sph.parameters.radiation_flag = False
-    sph.parameters.gamma = 1
-    sph.parameters.isothermal_flag = True
-    sph.parameters.integrate_entropy_flag = False
-    sph.parameters.timestep = dt  
-    sph.parameters.verbosity = 0
-    sph.parameters.eps_is_h_flag = False    # h_smooth is constant
-    eps = 0.1 | units.parsec
-    sph.parameters.gas_epsilon = eps
-    sph.parameters.sph_h_const = eps
-    parts.h_smooth= eps
+    # Add to code
+    brick.add_to(code, particle_set="gas_particles")
 
-    print('eps-h flag', sph.get_eps_is_h(), sph.get_consthsm())
+    # Get the half-length and mean density of the brick
+    half_length = brick.half_length
+    rho_cloud = brick.mean_density
 
-    expected_dt = 0.2*numpy.pi*numpy.power(eps, 1.5) \
-                   / numpy.sqrt(constants.G*Mcloud/N)
-
-    print("dt_exp=", expected_dt.value_in(units.Myr))
-    print("dt=", dt)
-    print("eps=", sph.parameters.gas_epsilon.in_(units.parsec))
-
-    sph.gas_particles.add_particles(parts)
-
-    channel_from_sph_to_parts= sph.gas_particles.new_channel_to(parts)
-    channel_from_parts_to_sph= parts.new_channel_to(sph.gas_particles)
-    
+    # Things needed for plotting + sims
     i = 0
     L = 2.4*half_length.value_in(units.parsec)  # map covers the whole cloud
-    # Colour scale around the mean cloud density
     log_rho = numpy.log10(rho_cloud.value_in(units.amu/units.cm**3))
     vmin, vmax = log_rho-2, log_rho+1
     E0 = 0.0
     ttarget = 0.0 | units.Myr
 
-    plot_hydro(ttarget, sph, i, L, vmin, vmax, prefix)
+    plot_hydro(ttarget, code, i, L, vmin, vmax, plot_prefix)
 
     while ttarget < t_end:
+        # Advance the target time by one timestep
         ttarget = float(i)*dt
-        print(ttarget)
-        sph.evolve_model(ttarget, timestep=dt)
-        E = sph.gas_particles.kinetic_energy() \
-             + sph.gas_particles.potential_energy() \
-             + sph.gas_particles.thermal_energy()
-        E_th = sph.gas_particles.thermal_energy()
+        print("Advancing to t =", ttarget)
+        code.evolve_model(ttarget, timestep=dt)
+        brick.sync_from(code)
+
+        # Get the total and thermal energy of the brick
+        E = brick.total_energy()
+        E_th = brick.thermal_energy()
+
+        # The error in total energy compared to the initial value
+        # This should stay small if the simulation conserves energy well
         if i == 0:
             E0 = E
         Eerr = (E-E0)/E0
-        print('energy=', E, 'energy_error=', Eerr, 'e_th=', E_th)
-        channel_from_sph_to_parts.copy()
-        plot_hydro(ttarget, sph, i, L, vmin, vmax, prefix)
-        plot_cloud_volume(parts, L=L, vmin=vmin, vmax=vmax, i=i, prefix=prefix)
+        print('Etot=', E, 'Etot_error=', Eerr, 'E_th=', E_th)
+
+        # Plotting
+        plot_hydro(ttarget, code, i, L, vmin, vmax, plot_prefix)
+        brick.plot_volume(L=L, vmin=vmin, vmax=vmax, i=i, prefix=plot_prefix)
         i += 1
 
-    sph.stop()
-    return parts
+    # Detach and stop
+    brick.detach(code)
+    code.stop()
+    return brick

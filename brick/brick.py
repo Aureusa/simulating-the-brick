@@ -3,7 +3,7 @@ TheBrick: a wrapper around the gas particles that represent the Brick
 (G0.253+0.016).
 
 The class only *represents* the cloud: it builds it, holds its particles and
-parameters, gives physical diagnostics, places it in a (Galactic) frame and
+parameters, gives physical diagnostics, places it in a frame and
 connects it to AMUSE codes. The solvers themselves (hydro, gravity, bridge,
 star formation) are set up elsewhere and act on a TheBrick instance through
 `add_to`, `sync_from` and `sync_to`.
@@ -26,8 +26,8 @@ from amuse.io import write_set_to_file, read_set_from_file
 from amuse.ext.molecular_cloud import molecular_cloud
 from amuse.ext.evrard_test import body_centered_grid_unit_cube
 
-import properties as prop
-from create_cloud import (shape_brick, add_irregularities, density_grid,
+from properties import brick_prop as prop
+from .utils import (shape_brick, add_irregularities, density_grid,
                           plot_cloud, plot_cloud_3d, plot_cloud_volume)
 
 
@@ -189,26 +189,8 @@ class TheBrick:
         v = self.gas.velocity - self.velocity
         return ((v**2).sum(axis=1).mean()).sqrt()
 
-    def lagrangian_radius(self, fraction=0.5):
-        """Radius around the centre of mass containing `fraction` of the mass."""
-        r = (self.gas.position - self.position).lengths()
-        order = numpy.argsort(r.value_in(units.parsec))
-        cum = numpy.cumsum(self.gas.mass[order].value_in(units.MSun))
-        i = numpy.searchsorted(cum, fraction*cum[-1])
-        return r[order][min(i, len(r)-1)]
-
-    def jacobi_radius(self, enclosed_mass, distance=None):
-        """
-        Tidal (Jacobi) radius for a point-mass host: r_J = d (m / 3M)^(1/3).
-        `distance` defaults to |position|, i.e. distance to the origin of the
-        frame (the Galactic centre after place_at).
-        """
-        if distance is None:
-            distance = self.position.length()
-        return distance*(self.mass/(3.*enclosed_mass))**(1./3.)
-
     # ------------------------------------------------------------------
-    # Placement in a (Galactic) frame
+    # Placement in a frame
     # ------------------------------------------------------------------
     def move_to_center(self):
         """Put the centre of mass at rest at the origin."""
@@ -225,30 +207,6 @@ class TheBrick:
             velocity = [0., 0., 0.] | units.kms
         self.gas.position += position - self.position
         self.gas.velocity += velocity - self.velocity
-        return self
-
-    def rotate(self, angle, axis=(0., 0., 1.)):
-        """
-        Rotate positions and velocities by `angle` (radians, or an AMUSE angle
-        quantity) around `axis` through the centre of mass. Used to orient
-        the long axis of the Brick (x) in the Galactic frame.
-        """
-        if hasattr(angle, "value_in"):
-            angle = angle.value_in(units.rad)
-        k = numpy.asarray(axis, dtype=float)
-        k /= numpy.linalg.norm(k)
-        K = numpy.array([[0., -k[2], k[1]],
-                         [k[2], 0., -k[0]],
-                         [-k[1], k[0], 0.]])
-        # Rodrigues' rotation formula
-        Rm = (numpy.eye(3) + numpy.sin(angle)*K
-              + (1.-numpy.cos(angle))*K @ K)
-
-        com, vcom = self.position, self.velocity
-        pos = (self.gas.position - com).value_in(units.parsec)
-        vel = (self.gas.velocity - vcom).value_in(units.kms)
-        self.gas.position = (pos @ Rm.T | units.parsec) + com
-        self.gas.velocity = (vel @ Rm.T | units.kms) + vcom
         return self
 
     def as_probe_particle(self):
@@ -311,7 +269,7 @@ class TheBrick:
         return self
 
     # ------------------------------------------------------------------
-    # Diagnostics and I/O
+    # Diagnostics/Plotting
     # ------------------------------------------------------------------
     def density_grid(self, L=None, N=64, smoothing=0.2):
         """Smoothed 3D density grid; see create_cloud.density_grid."""
@@ -332,10 +290,12 @@ class TheBrick:
                     mass=self.mass.in_(units.MSun),
                     position=self.position.in_(units.parsec),
                     velocity=self.velocity.in_(units.kms),
-                    half_mass_radius=self.lagrangian_radius(0.5).in_(units.parsec),
                     velocity_dispersion=self.velocity_dispersion().in_(units.kms),
                     virial_ratio=self.virial_ratio())
 
+    # ------------------------------------------------------------------
+    # File I/O - Experimental (probably not needed)
+    # ------------------------------------------------------------------
     def save(self, filename):
         """Write the particles and the parameters to an AMUSE (HDF5) file."""
         attrs = self.gas.collection_attributes
